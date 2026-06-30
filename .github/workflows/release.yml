@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - major
+          - minor
+          - patch
+      dry_run:
+        description: "Dry run: build but do not push tag, image, or create a Release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/immich-metadata-api
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next tag from bump type
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          latest="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1 || true)"
+          if [[ -z "$latest" ]]; then
+            echo "No existing v* tags found; starting from v0.0.0"
+            latest="v0.0.0"
+          fi
+          echo "Latest tag: $latest"
+
+          if [[ ! "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Latest tag '$latest' does not match vMAJOR.MINOR.PATCH; refusing to bump"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+
+          case "$BUMP" in
+            major) next="v$((major + 1)).0.0" ;;
+            minor) next="v${major}.$((minor + 1)).0" ;;
+            patch) next="v${major}.${minor}.$((patch + 1))" ;;
+            *) echo "::error::Unknown bump type: $BUMP"; exit 1 ;;
+          esac
+
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::Tag $next already exists locally"
+            exit 1
+          fi
+          if [[ -n "$(git ls-remote --tags origin "refs/tags/$next" 2>/dev/null)" ]]; then
+            echo "::error::Tag $next already exists on origin"
+            exit 1
+          fi
+
+          version="${next#v}"
+          echo "Next tag: $next  (version $version)"
+          {
+            echo "next_tag=$next"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Tag HEAD locally
+        env:
+          NEXT_TAG: ${{ steps.bump.outputs.next_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEXT_TAG" -m "Release $NEXT_TAG"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.bump.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ !inputs.dry_run }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.bump.outputs.version }}
+
+      - name: Dry-run summary
+        if: ${{ inputs.dry_run }}
+        env:
+          NEXT_TAG: ${{ steps.bump.outputs.next_tag }}
+        run: |
+          {
+            echo "## Dry run: no remote changes made"
+            echo ""
+            echo "- Computed tag: \`$NEXT_TAG\` (not pushed)"
+            echo "- Image built for linux/amd64,linux/arm64 but not pushed"
+            echo "- No GitHub Release created"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          NEXT_TAG: ${{ steps.bump.outputs.next_tag }}
+        run: git push origin "$NEXT_TAG"
+
+      - name: Create and publish release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_TAG: ${{ steps.bump.outputs.next_tag }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$NEXT_TAG" \
+            --draft \
+            --generate-notes \
+            --target main \
+            --title "$NEXT_TAG"
+          # Prepend the published image reference to the auto-generated notes.
+          body="$(gh release view "$NEXT_TAG" --json body -q .body)"
+          printf 'Image: `%s:%s`\n\n%s\n' "$IMAGE" "$VERSION" "$body" > "$RUNNER_TEMP/notes.md"
+          gh release edit "$NEXT_TAG" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
+
+      - name: Print remediation on failure
+        if: failure()
+        env:
+          NEXT_TAG: ${{ steps.bump.outputs.next_tag }}
+        run: |
+          cat <<EOF
+          ::warning::Workflow failed. Tags and Releases may need manual cleanup:
+            gh release delete "$NEXT_TAG" --yes
+            git push origin --delete "refs/tags/$NEXT_TAG"
+          EOF

@@ -1,0 +1,26 @@
+# Example: run immich-metadata-api alongside an existing Immich stack.
+#
+# Drop this service into your Immich compose project (or merge it in) so it joins
+# the same network and can reach the internal `database` and `immich-server` hosts.
+services:
+  immich-metadata-api:
+    image: ghcr.io/borzilleri/immich-metadata-api:latest
+    container_name: immich-metadata-api
+    environment:
+      # How this service reaches Immich to validate API keys (internal hostname).
+      IMMICH_INTERNAL_URL: http://immich-server:2283/api
+      # Database connection. Reuse Immich's DB_* values, or set METADATA_API_DB_URL.
+      # Recommended: point these at a read-only Postgres role (see README).
+      DB_HOSTNAME: database
+      DB_PORT: "5432"
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_DATABASE_NAME: ${DB_DATABASE_NAME:-immich}
+      # AUTH_CACHE_TTL: "60"
+    # Expose however you prefer. Simplest is a published port:
+    ports:
+      - "8080:8000"
+    # ...or omit `ports` and add a route on your existing reverse proxy (TLS) instead.
+    depends_on:
+      - database
+    restart: unless-stopped
