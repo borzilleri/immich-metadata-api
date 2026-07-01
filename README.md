@@ -76,6 +76,7 @@ API Keys used with this service require, at least, the following permissions:
 | `IMMICH_INTERNAL_URL` | `http://immich-server:2283/api` | URL of the Immich API |
 | `METADATA_API_DB_URL` | — | Full Postgres conninfo/URL. If set, overrides the `DB_*` vars below. |
 | `DB_HOSTNAME` / `DB_PORT` / `DB_USERNAME` / `DB_PASSWORD` / `DB_DATABASE_NAME` | `database` / `5432` / `postgres` / `postgres` / `immich` | Used when `METADATA_API_DB_URL` is unset (mirrors Immich's vars). |
+| `DB_PASSWORD_FILE` | — | Path to a file containing the DB password. Takes precedence over `DB_PASSWORD` when set. |
 | `AUTH_CACHE_TTL` | `300` | Seconds to cache a key's full validation (validity + `user.read`/`asset.read` + owner id). |
 | `APP_VERSION` | `dev` | Reported by `/health` and `/info`; set by the release build. |
 | `GITHUB_REPO` | `borzilleri/immich-metadata-api` | `owner/repo` `/info` checks for the latest release. |

@@ -14,13 +14,23 @@ services:
       DB_HOSTNAME: database
       DB_PORT: "5432"
       DB_USERNAME: ${DB_USERNAME:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      # Password is read from the mounted secret file (see `secrets:` below).
+      # To use a plain env var instead, drop this and set DB_PASSWORD.
+      DB_PASSWORD_FILE: /run/secrets/db_password
       DB_DATABASE_NAME: ${DB_DATABASE_NAME:-immich}
       # How long to cache API Key Authorization Lookups, in seconds.
       # AUTH_CACHE_TTL: "60"
+    secrets:
+      - db_password
     ports:
       - "8080:8000"
     depends_on:
       - database
       - immich-server
     restart: unless-stopped
+
+secrets:
+  db_password:
+    # Contents of this file are the DB password (whitespace/newlines trimmed).
+    # For Swarm, use `external: true` and manage it with `docker secret`.
+    file: ./db_password.txt
