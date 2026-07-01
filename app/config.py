@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from psycopg.conninfo import make_conninfo
+
+
+def _db_password() -> str:
+    """Read the DB password from ``DB_PASSWORD_FILE`` if set (Docker secrets
+    pattern), otherwise fall back to the ``DB_PASSWORD`` env var."""
+    path = os.getenv("DB_PASSWORD_FILE")
+    if path:
+        return Path(path).read_text().strip()
+    return os.getenv("DB_PASSWORD", "postgres")
 
 
 def _db_conninfo() -> str:
@@ -22,7 +32,7 @@ def _db_conninfo() -> str:
         host=os.getenv("DB_HOSTNAME", "database"),
         port=os.getenv("DB_PORT", "5432"),
         user=os.getenv("DB_USERNAME", "postgres"),
-        password=os.getenv("DB_PASSWORD", "postgres"),
+        password=_db_password(),
         dbname=os.getenv("DB_DATABASE_NAME", "immich"),
     )
 
